@@ -26,6 +26,7 @@
 #define SSAM_LOADER         "/var/sam_loader"
 #define SSAM_PID_FILE       "/var/tmp/.sam.pid"
 #define SSAM_LOCK           "/var/tmp/ssam_lock"
+#define SSAM_ENV            "/var/tmp/environment"
 
 #define syslog_userlog(format, args...)     \
 {                                           \
@@ -57,9 +58,17 @@ static int read_random_bytes (void *buf, size_t len)
 void ssam_start (void)
 {
     char buf[12];
-    int maxdelay;
+    char cmd[1024];
+    int cid, maxdelay;
     unsigned int delay;
     unsigned short r;
+    char *p;
+    int i;
+
+    syscfg_get(NULL, "bridge_mode", buf, sizeof(buf));
+    if (strcmp(buf, "1") == 0) {
+        return;
+    }
 
     syscfg_get(NULL, "ssam_enable", buf, sizeof(buf));
     if (strcmp(buf, "1") != 0) {
@@ -79,21 +88,56 @@ void ssam_start (void)
         }
     }
 
-#if 0
-    if (access(SSAM_LOADER, F_OK) != 0) {
-        if (mkdir(SSAM_LOADER, 0777) != 0) {
+    if (access("/var/sam_loader", F_OK) != 0) {
+        if (mkdir("/var/sam_loader", 0777) != 0) {
             return;
         }
-        if (system("mount -t tmpfs tmpfs " SSAM_LOADER " && "
-                   "ln -sf /etc/certs/sam_key_1.pem " SSAM_LOADER "/sign_key_3.pem && "
-                   "ln -sf /etc/certs/sam_key_2.pem " SSAM_LOADER "/sign_key_4.pem && "
-                   "ln -sf /etc/certs/amazon.pem " SSAM_LOADER "/amazon.pem && "
-                   "mount -o remount,r " SSAM_LOADER) != 0)
-        {
+
+        syscfg_get(NULL, "Customer_Index", buf, sizeof(buf));
+        if (buf[0] != 0) {
+            cid = atoi(buf);
+        }
+        else {
+            cid = 0;
+        }
+
+        p = cmd;
+        p += sprintf(p, "mount -t tmpfs tmpfs /var/sam_loader && ");
+
+        for (i = 0; i < 3; i++) {
+            char key[64];
+            snprintf(key, sizeof(key), "/etc/certs/ssam_%d_%d.pem", cid, i + 1);
+            if (access(key, F_OK) != 0) {
+                cid = 0;
+                snprintf(key, sizeof(key), "/etc/certs/ssam_%d_%d.pem", cid, i + 1);
+            }
+            p += sprintf(p, "ln -sf %s /var/sam_loader/sign_key_%d.pem && ", key, i);
+        }
+
+        p += sprintf(p, "ln -sf /etc/certs/sam_key_1.pem /var/sam_loader/sign_key_3.pem && "
+                        "ln -sf /etc/certs/sam_key_2.pem /var/sam_loader/sign_key_4.pem && "
+                        "ln -sf /etc/certs/amazon.pem /var/sam_loader/amazon.pem && "
+                        "mount -o remount,ro /var/sam_loader");
+
+        if (system(cmd) != 0) {
             return;
         }
     }
-#endif
+
+    p = cmd;
+    p += sprintf(p, "/usr/bin/sam");
+
+    syscfg_get(NULL, "ssam_updaterenable", buf, sizeof(buf));
+    if (strcmp(buf, "1") == 0) {
+        p += sprintf(p, " -r");
+    }
+
+    syscfg_get(NULL, "ssam_provisioningmodel", buf, sizeof(buf));
+    if (strcmp(buf, "2") == 0) {
+        p += sprintf(p, " -s");
+    }
+
+    p += sprintf(p, " &");
 
     maxdelay = 0;
     syscfg_get(NULL, "ssam_maxstartdelay", buf, sizeof(buf));
@@ -101,7 +145,7 @@ void ssam_start (void)
         maxdelay = atoi(buf);
     }
     if (maxdelay <= 0) {
-        maxdelay = 60;
+        maxdelay = 30;
     }
 
     if (read_random_bytes(&r, sizeof(r)) == sizeof(r)) {
@@ -115,7 +159,7 @@ void ssam_start (void)
         delay = sleep(delay);
     }
 
-    if (system("/usr/bin/sam &") != 0) {
+    if (system(cmd) != 0) {
         return;
     }
 }
@@ -134,7 +178,7 @@ BOOL X_LGI_COM_DigitalSecurity_GetParamUlongValue(ANSC_HANDLE hInsContext, char 
         if (buf[0] != 0) {
             *puLong = (ULONG) atoi(buf);
         } else {
-            *puLong = 120;
+            *puLong = 30;
             AnscTraceWarning(("Error in syscfg_get for ssam_maxstartdelay\n"));
         }
         return TRUE;
@@ -204,21 +248,29 @@ ULONG X_LGI_COM_DigitalSecurity_GetParamStringValue(ANSC_HANDLE hInsContext, cha
     }
 
     if (strcmp("AgentVersion", ParamName) == 0) {
-        FILE *fp = NULL;
-        char buffer[32] = { 0 };
-        char version[32] = { 0 };
+        char buf[12];
 
-        fp = fopen(SSAM_PARTITION "/agent_version", "r");
-        if (fp != NULL) {
-            if ((fgets(buffer, sizeof(buffer), fp) != NULL) && (strlen(buffer) != 0)) {
-                snprintf(version, sizeof(version), "%s", buffer);
-            }
-            fclose(fp);
+        syscfg_get(NULL, "ssam_enable", buf, sizeof(buf));
+        if ((strcmp(buf, "1") != 0) || (access(SSAM_PID_FILE, F_OK) != 0)) {
+           strcpy(pValue, "");
         }
-        if (strlen(version) == 0) {
-            strcpy(pValue, "3.7.0");
-        } else {
-            strcpy(pValue, version);
+        else {
+           FILE *fp = NULL;
+           char buffer[32] = { 0 };
+           char version[32] = { 0 };
+
+           fp = fopen(SSAM_PARTITION "/agent_version", "r");
+           if (fp != NULL) {
+               if ((fgets(buffer, sizeof(buffer), fp) != NULL) && (strlen(buffer) != 0)) {
+                   snprintf(version, sizeof(version), "%s", buffer);
+               }
+               fclose(fp);
+           }
+           if (strlen(version) == 0) {
+               strcpy(pValue, "");
+           } else {
+               strcpy(pValue, version);
+           }
         }
         return 0;
     }
@@ -243,13 +295,25 @@ ULONG X_LGI_COM_DigitalSecurity_GetParamStringValue(ANSC_HANDLE hInsContext, cha
         return 0;
     }
 
+    if (strcmp("SecretKey", ParamName) == 0) {
+        syscfg_get(NULL, "ssam_agentpasswd", pValue, *pUlSize);
+        return 0;
+    }
+
     return -1;
 }
 
 BOOL X_LGI_COM_DigitalSecurity_SetParamStringValue(ANSC_HANDLE hInsContext, char *ParamName, char *pString)
 {
     if (strcmp("ProvisionedEnvironment", ParamName) == 0) {
-        if (syscfg_set_commit(NULL, "ssam_provisionedenv", pString) != 0) {
+        if (syscfg_set_commit(NULL, "ssam_provisionedenv", pString) == 0) {
+            FILE *fp = fopen(SSAM_ENV, "w");
+            if (fp != NULL) {
+                fputs(pString, fp);
+                fclose(fp);
+            }
+        }
+        else {
             AnscTraceWarning(("Error in syscfg_set for ssam_provisionedenv\n"));
         }
         return TRUE;
