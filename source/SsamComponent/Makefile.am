@@ -19,4 +19,4 @@ bin_PROGRAMS = ssam_agent
 ssam_agent_CPPFLAGS = -I$(top_srcdir)/source/SsamComponent -I=${includedir}/ccsp
 ssam_agent_CFLAGS = $(DBUS_CFLAGS)
 ssam_agent_SOURCES = cosa_apis_ssamagentplugin.c plugin_main.c ssp_action.c ssp_messagebus_interface.c ssp_main.c dm_pack_datamodel.c
-ssam_agent_LDFLAGS = -lccsp_common -lrdkloggers -lsysevent -lsyscfg -lulog $(DBUS_LIBS) -lpthread
+ssam_agent_LDFLAGS = -lccsp_common -lrdkloggers -lsysevent -lsyscfg -lulog $(DBUS_LIBS) -lpthread -lcrypto
