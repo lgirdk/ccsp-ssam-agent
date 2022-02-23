@@ -86,6 +86,11 @@ void ssam_start (void)
         if (system("mount -t tmpfs -o size=32M tmpfs " SSAM_PARTITION) != 0) {
             return;
         }
+
+        /* Temp workaround for older versions of ssam-bin */
+        if (system("ln -s /etc/certs/amazon.pem " SSAM_PARTITION "/.amazon.pem") != 0) {
+            return;
+        }
     }
 
     if (access("/var/sam_loader", F_OK) != 0) {
